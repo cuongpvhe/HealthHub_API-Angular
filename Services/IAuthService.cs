@@ -8,5 +8,6 @@ namespace HealthHub_API.Services
         Task<TokenApiDto?> AuthenticateAsync(LoginDto loginDto);
         Task<string> RegisterNguoiDungAsync(RegisterNguoiDungDto registerDto);
         Task<string> RegisterDoctorAsync(RegisterDoctorDto registerDto);
+        Task<string> ForgotPasswordAsync(ForgotPasswordDto forgotPasswordDto);
     }
 }

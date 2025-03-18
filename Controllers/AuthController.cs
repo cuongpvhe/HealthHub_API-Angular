@@ -1,6 +1,7 @@
 ﻿using HealthHub_API.Dto;
 using HealthHub_API.Models;
 using HealthHub_API.Services;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -46,45 +47,47 @@ namespace HealthHub_API.Controllers
         [HttpPost("registerDoctor")]
         public async Task<IActionResult> RegisterDoctor([FromBody] RegisterDoctorDto registerDto)
         {
-            //// Kiểm tra xem header có chứa Authorization không
-            //if (!Request.Headers.ContainsKey("Authorization"))
-            //{
-            //    return Unauthorized(new { Message = "Không tìm thấy token!" });
-            //}
+            // Kiểm tra xem header có chứa Authorization không
+            if (!Request.Headers.ContainsKey("Authorization"))
+            {
+                return Unauthorized(new { Message = "Không tìm thấy token!" });
+            }
 
-            //// Lấy token từ header
-            //var authHeader = Request.Headers["Authorization"].ToString();
-            //if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
-            //{
-            //    return Unauthorized(new { Message = "Token không hợp lệ!" });
-            //}
+            // Lấy token từ header
+            var authHeader = Request.Headers["Authorization"].ToString();
+            if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+            {
+                return Unauthorized(new { Message = "Token không hợp lệ!" });
+            }
 
-            //var token = authHeader.Replace("Bearer ", "").Trim();
+            var token = authHeader.Replace("Bearer ", "").Trim();
 
-            //if (string.IsNullOrEmpty(token))
-            //{
-            //    return Unauthorized(new { Message = "Token không hợp lệ hoặc rỗng!" });
-            //}
+            if (string.IsNullOrEmpty(token))
+            {
+                return Unauthorized(new { Message = "Token không hợp lệ hoặc rỗng!" });
+            }
 
-            //// Kiểm tra và giải mã token
-            //var claims = ValidateJwtToken(token);
-            //if (claims == null)
-            //{
-            //    return Unauthorized(new { Message = "Token không hợp lệ hoặc đã hết hạn!" });
-            //}
+            // Kiểm tra và giải mã token
+            var claims = ValidateJwtToken(token);
+            if (claims == null)
+            {
+                return Unauthorized(new { Message = "Token không hợp lệ hoặc đã hết hạn!" });
+            }
 
-            //// Lấy quyền (role) từ token
-            //var roleClaim = claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+            // Lấy quyền (role) từ token
+            var roleClaim = claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
 
-            //if (string.IsNullOrEmpty(roleClaim) || roleClaim != "Admin")
-            //{
-            //    return Unauthorized(new { Message = "Chỉ có Admin mới được phép đăng ký bác sĩ!" });
-            //}
+            if (string.IsNullOrEmpty(roleClaim) || roleClaim != "Admin")
+            {
+                return Unauthorized(new { Message = "Chỉ có Admin mới được phép đăng ký bác sĩ!" });
+            }
 
-            // Tiến hành đăng ký bác sĩ
+            //Tiến hành đăng ký bác sĩ
             var message = await _authService.RegisterDoctorAsync(registerDto);
             return Ok(new { Message = message });
         }
+       
+
 
 
         private IEnumerable<Claim> ValidateJwtToken(string token)
@@ -94,6 +97,11 @@ namespace HealthHub_API.Controllers
             var jsonToken = handler.ReadToken(token) as JwtSecurityToken;
             return jsonToken?.Claims;
         }
-
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto forgotPasswordDto)
+        {
+            var result = await _authService.ForgotPasswordAsync(forgotPasswordDto);
+            return Ok(new { message = result });
+        }
     }
 }

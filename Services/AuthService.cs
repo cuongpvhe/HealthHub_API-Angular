@@ -2,6 +2,7 @@
 using HealthHub_API.Helpers;
 using HealthHub_API.Models;
 using HealthHub_API.Repositories;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System;
@@ -26,106 +27,112 @@ namespace HealthHub_API.Services
             _configuration = configuration;
         }
 
-        public async Task<TokenApiDto> AuthenticateAsync(LoginDto loginDto)
+       public async Task<TokenApiDto> AuthenticateAsync(LoginDto loginDto)
+{
+    if (loginDto == null)
+        throw new ArgumentException("Dữ liệu đăng nhập không hợp lệ!");
+
+    object user = null;
+    string role = string.Empty;
+
+    // Lấy thông tin Admin từ appsettings.json
+    var adminConfig = _configuration.GetSection("AdminAccount");
+    string adminUsername = adminConfig["TaiKhoan"];
+    string adminPassword = adminConfig["MatKhau"];
+    string adminRole = adminConfig["VaiTro"];
+
+    // Nếu là tài khoản admin
+    if (loginDto.TaiKhoan == adminUsername)
+    {
+        var admin = await _context.QuanTris.FirstOrDefaultAsync(x => x.TaiKhoan == adminUsername);
+
+        // Nếu admin chưa tồn tại -> tự động thêm
+        if (admin == null)
         {
-            if (loginDto == null)
-                throw new ArgumentException("Dữ liệu đăng nhập không hợp lệ!");
-
-            object user = null;
-            string role = loginDto.VaiTro; // Vai trò từ DTO
-
-            // Lấy thông tin Admin từ appsettings.json
-            var adminConfig = _configuration.GetSection("AdminAccount");
-            string adminUsername = adminConfig["TaiKhoan"];
-            string adminPassword = adminConfig["MatKhau"];
-            string adminRole = adminConfig["VaiTro"];
-
-            // Kiểm tra nếu người dùng nhập tài khoản Admin
-            if (loginDto.TaiKhoan == adminUsername)
+            var hashedPassword = PasswordHasher.HashPassword(adminPassword);
+            admin = new QuanTri
             {
-                var admin = await _context.QuanTris.FirstOrDefaultAsync(x => x.TaiKhoan == adminUsername);
-
-                // Nếu chưa có admin trong database -> tự động thêm
-                if (admin == null)
-                {
-                    var hashedPassword = PasswordHasher.HashPassword(adminPassword);
-                    admin = new QuanTri
-                    {
-                        TaiKhoan = adminUsername,
-                        MatKhau = hashedPassword,
-                        HoTen = "Administrator",
-                        
-                        VaiTro = adminRole,
-                        Token = "",
-                        RefreshToken = "",
-                        RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(1000)
-                    };
-
-                    await _context.QuanTris.AddAsync(admin);
-                    await _context.SaveChangesAsync();
-                }
-
-                role = "Admin";
-                user = admin;
-            }
-            else
-            {
-                user = await _context.NguoiDungs.FirstOrDefaultAsync(x => x.TaiKhoan == loginDto.TaiKhoan);
-                if (user != null)
-                {
-                    role = "User";
-                }
-                else
-                {
-                    user = await _context.QuanTris.FirstOrDefaultAsync(x => x.TaiKhoan == loginDto.TaiKhoan);
-                    if (user != null)
-                    {
-                        role = user is QuanTri quanTriUser ? quanTriUser.VaiTro : "Admin"; 
-                    }
-                    else
-                    {
-                        throw new UnauthorizedAccessException("Tài khoản không tồn tại!");
-                    }
-                }
-            }
-
-            if (user == null)
-                throw new UnauthorizedAccessException("Tài khoản không tồn tại!");
-
-            var storedPassword = (user is NguoiDung nguoiDung) ? nguoiDung.MatKhau :
-                                 (user is QuanTri quanTri) ? quanTri.MatKhau : null;
-
-            if (string.IsNullOrEmpty(storedPassword))
-                throw new UnauthorizedAccessException("Mật khẩu không hợp lệ!");
-
-            if (!PasswordHasher.VerifyPassword(loginDto.MatKhau, storedPassword))
-                throw new UnauthorizedAccessException("Mật khẩu không chính xác!");
-
-            // Tạo JWT token
-            string token = CreateJwtToken(user, role);
-            string refreshToken = CreateRefreshToken();
-
-            if (user is NguoiDung nguoiDungEntity)
-            {
-                nguoiDungEntity.Token = token;
-                nguoiDungEntity.RefreshToken = refreshToken;
-                nguoiDungEntity.RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(1000);
-            }
-            else if (user is QuanTri quanTriEntity)
-            {
-                quanTriEntity.Token = token;
-                quanTriEntity.RefreshToken = refreshToken;
-                quanTriEntity.RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(1000);
-            }
-
-            await _context.SaveChangesAsync();
-
-            return new TokenApiDto
-            {
-                Token = token,
-                RefreshToken = refreshToken
+                TaiKhoan = adminUsername,
+                MatKhau = hashedPassword,
+                HoTen = "Administrator",
+                VaiTro = adminRole,
+                Token = "",
+                RefreshToken = "",
+                RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(10)
             };
+
+            await _context.QuanTris.AddAsync(admin);
+            await _context.SaveChangesAsync();
         }
+
+        role = "Admin";
+        user = admin;
+    }
+    else
+    {
+        // Kiểm tra trong bảng NguoiDung trước
+        var nguoiDung = await _context.NguoiDungs.FirstOrDefaultAsync(x => x.TaiKhoan == loginDto.TaiKhoan);
+        if (nguoiDung != null)
+        {
+            role = "User";
+            user = nguoiDung;
+        }
+        else
+        {
+            // Nếu không phải User, kiểm tra trong bảng QuanTri (Doctor/Admin)
+            var quanTri = await _context.QuanTris.FirstOrDefaultAsync(x => x.TaiKhoan == loginDto.TaiKhoan);
+            if (quanTri != null)
+            {
+                role = quanTri.VaiTro; // Lấy vai trò từ bảng QuanTri (Admin hoặc Doctor)
+                user = quanTri;
+            }
+        }
+    }
+
+    // Nếu không tìm thấy user nào
+    if (user == null)
+        throw new UnauthorizedAccessException("Tài khoản không tồn tại!");
+
+    // Lấy mật khẩu đã lưu trong DB
+    string storedPassword = user switch
+    {
+        NguoiDung nguoiDungEntity => nguoiDungEntity.MatKhau,
+        QuanTri quanTriEntity => quanTriEntity.MatKhau,
+        _ => null
+    };
+
+    if (string.IsNullOrEmpty(storedPassword) || !PasswordHasher.VerifyPassword(loginDto.MatKhau, storedPassword))
+        throw new UnauthorizedAccessException("Mật khẩu không chính xác!");
+
+    // Tạo JWT token và refresh token
+    string token = CreateJwtToken(user, role);
+    string refreshToken = CreateRefreshToken();
+
+    // Cập nhật token vào database
+    switch (user)
+    {
+        case NguoiDung nguoiDungEntity:
+            nguoiDungEntity.Token = token;
+            nguoiDungEntity.RefreshToken = refreshToken;
+            nguoiDungEntity.RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(10);
+            break;
+
+        case QuanTri quanTriEntity:
+            quanTriEntity.Token = token;
+            quanTriEntity.RefreshToken = refreshToken;
+            quanTriEntity.RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(10);
+            break;
+    }
+
+    await _context.SaveChangesAsync();
+
+    return new TokenApiDto
+    {
+        Token = token,
+        RefreshToken = refreshToken,
+        VaiTro = role // Trả về VaiTro để giao diện hiển thị đúng
+    };
+}
 
 
         public async Task<string> RegisterNguoiDungAsync(RegisterNguoiDungDto registerDto)
@@ -145,10 +152,11 @@ namespace HealthHub_API.Services
                 HoTen = registerDto.HoTen,
                 Email = registerDto.Email,
                 RefreshToken = "",
-                RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(1000)
+                RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(10)
             };
 
             await _nguoiDungRepository.AddAsync(nguoiDung);
+
             return "Đăng ký thành công!";
         }
         public async Task<string> RegisterDoctorAsync(RegisterDoctorDto registerDto)
@@ -171,7 +179,7 @@ namespace HealthHub_API.Services
                 
                 VaiTro = "Doctor", // Đặt vai trò cho bác sĩ là "Doctor"
                 RefreshToken = "",
-                RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(1000)
+                RefreshTokenExpiry = DateTime.UtcNow.AddSeconds(10)
             };
 
             // Lưu bác sĩ vào cơ sở dữ liệu
@@ -201,7 +209,7 @@ namespace HealthHub_API.Services
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = identity,
-                Expires = DateTime.UtcNow.AddSeconds(1000),
+                Expires = DateTime.UtcNow.AddSeconds(10),
                 SigningCredentials = credentials
             };
 
@@ -222,32 +230,49 @@ namespace HealthHub_API.Services
             return refreshToken;
         }
 
-        private ClaimsPrincipal GetPrincipleFromExpiredToken(string token)
-        {
-            var key = Encoding.UTF8.GetBytes("veryverysceret...............................................");
-            var tokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateAudience = false,
-                ValidateIssuer = false,
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateLifetime = false // Cho phép kiểm tra token đã hết hạn
-            };
 
-            var tokenHandler = new JwtSecurityTokenHandler();
-            SecurityToken securityToken;
-            var principal = tokenHandler.ValidateToken(token, tokenValidationParameters, out securityToken);
-            var jwtSecurityToken = securityToken as JwtSecurityToken;
 
-            if (jwtSecurityToken == null || !jwtSecurityToken.Header.Alg.Equals(SecurityAlgorithms.HmacSha256, StringComparison.InvariantCultureIgnoreCase))
-                throw new SecurityTokenException("Token không hợp lệ!");
 
-            return principal;
-        }
+        //private ClaimsPrincipal GetPrincipleFromExpiredToken(string token)
+        //{
+        //    var key = Encoding.UTF8.GetBytes("veryverysceret...............................................");
+        //    var tokenValidationParameters = new TokenValidationParameters
+        //    {
+        //        ValidateAudience = false,
+        //        ValidateIssuer = false,
+        //        ValidateIssuerSigningKey = true,
+        //        IssuerSigningKey = new SymmetricSecurityKey(key),
+        //        ValidateLifetime = false // Cho phép kiểm tra token đã hết hạn
+        //    };
+
+        //    var tokenHandler = new JwtSecurityTokenHandler();
+        //    SecurityToken securityToken;
+        //    var principal = tokenHandler.ValidateToken(token, tokenValidationParameters, out securityToken);
+        //    var jwtSecurityToken = securityToken as JwtSecurityToken;
+
+        //    if (jwtSecurityToken == null || !jwtSecurityToken.Header.Alg.Equals(SecurityAlgorithms.HmacSha256, StringComparison.InvariantCultureIgnoreCase))
+        //        throw new SecurityTokenException("Token không hợp lệ!");
+
+        //    return principal;
+        //}
 
         //private string CreateRefreshToken()
         //{
         //    return Guid.NewGuid().ToString();
         //}
+
+        public async Task<string> ForgotPasswordAsync(ForgotPasswordDto forgotPasswordDto)
+        {
+            var nguoiDung = await _nguoiDungRepository.GetByEmailAsync(forgotPasswordDto.Email);
+            if (nguoiDung == null)
+                return "Email không tồn tại!";
+
+            // Mã hóa mật khẩu mới
+            nguoiDung.MatKhau = PasswordHasher.HashPassword(forgotPasswordDto.NewPassword);
+            await _nguoiDungRepository.UpdateAsync(nguoiDung);
+
+            return "Mật khẩu đã được đặt lại thành công!";
+        }
+
     }
 }
